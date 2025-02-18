@@ -261,7 +261,8 @@ func (n *terraformPluginFrameworkExternalClient) getDiffPlanResponse(ctx context
 		return nil, false, errors.Wrap(err, "cannot construct dynamic value for TF Config")
 	}
 
-	//
+	// TODO(erhan): improve proposed
+	n.resourceSchema.Type().TerraformType()
 	tfPlannedStateDynamicVal, err := protov5DynamicValueFromMap(n.params, n.resourceValueTerraformType)
 	if err != nil {
 		return nil, false, errors.Wrap(err, "cannot construct dynamic value for TF Planned State")
@@ -391,7 +392,6 @@ func (n *terraformPluginFrameworkExternalClient) Observe(ctx context.Context, mg
 			specUpdateRequired = specUpdateRequired || nameChanged
 		}
 	}
-
 	return managed.ExternalObservation{
 		ResourceExists:          resourceExists,
 		ResourceUpToDate:        !hasDiff,
@@ -708,6 +708,8 @@ func protov5DynamicValueFromMap(data map[string]any, terraformType tftypes.Type)
 		return nil, errors.Wrap(err, "cannot marshal json")
 	}
 
+	// intermata
+
 	tfValue, err := tftypes.ValueFromJSONWithOpts(jsonBytes, terraformType, tftypes.ValueFromJSONOpts{IgnoreUndefinedAttributes: true})
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot construct tf value from json")
@@ -723,4 +725,8 @@ func protov5DynamicValueFromMap(data map[string]any, terraformType tftypes.Type)
 
 func (n *terraformPluginFrameworkExternalClient) Disconnect(_ context.Context) error {
 	return nil
+}
+
+func (n *terraformPluginFrameworkExternalClient) proposed(prior, cfg tftypes.Value) {
+
 }
