@@ -36,14 +36,12 @@ var (
 			"v1alpha1",
 			"v1beta1",
 		},
-
-		Controller: []string{
+		ControllerMap: map[string]BasePackagesControllerMeta{
 			// Default package for ProviderConfig controllers
-			"providerconfig",
-		},
-		ControllerMap: map[string]string{
-			// Default package for ProviderConfig controllers
-			"providerconfig": PackageNameConfig,
+			"providerconfig": {
+				PkgPath: PackageNameConfig,
+				Kind:    "ProviderConfig",
+			},
 		},
 	}
 

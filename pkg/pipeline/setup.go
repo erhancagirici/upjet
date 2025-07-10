@@ -36,44 +36,62 @@ type SetupGenerator struct {
 }
 
 // Generate writes the setup file given list of version packages.
-func (sg *SetupGenerator) Generate(versionPkgMap map[string][]string, monolith bool) error {
+func (sg *SetupGenerator) Generate(controllerRegistry map[string][]controllerMeta, rootGroup string, monolith bool) error {
 	if monolith {
-		return errors.Wrap(sg.generate("", versionPkgMap[config.PackageNameMonolith]), "failed to generate the controller setup file")
+		return errors.Wrap(sg.generate("", rootGroup, controllerRegistry[config.PackageNameMonolith]), "failed to generate the controller setup file")
 	}
 
-	for group, versionPkgList := range versionPkgMap {
-		if err := sg.generate(group, versionPkgList); err != nil {
+	for group, versionPkgList := range controllerRegistry {
+		if err := sg.generate(group, rootGroup, versionPkgList); err != nil {
 			return errors.Wrapf(err, "failed to generate the controller setup file for group: %s", group)
 		}
 	}
 	return nil
 }
 
-func (sg *SetupGenerator) generate(group string, versionPkgList []string) error {
+func (sg *SetupGenerator) generate(group string, rootGroup string, controllers []controllerMeta) error {
 	// TODO(negz): Should this really be apis? They're not imported for setup...
 	setupFile := wrapper.NewFile(sg.ModulePath, filepath.Base(sg.ModulePath), templates.SetupTemplate,
 		wrapper.WithGenStatement(GenStatement),
 		wrapper.WithHeaderPath(sg.LicenseHeaderPath),
 	)
-	sort.Strings(versionPkgList)
-	aliases := make([]string, len(versionPkgList))
-	for i, pkgPath := range versionPkgList {
-		aliases[i] = setupFile.Imports.UsePackage(pkgPath)
+	sortControllers(controllers)
+	aliases := make(map[string]string, len(controllers))
+	for _, meta := range controllers {
+		aliases[meta.kind] = setupFile.Imports.UsePackage(meta.pkgPath)
 	}
 	g := ""
 	filePath := filepath.Join(sg.LocalDirectoryPath, "zz_setup.go")
 	if group != "" {
 		filePath = filepath.Join(sg.LocalDirectoryPath, fmt.Sprintf("zz_%s_setup.go", group))
-		g = "_" + group
+		g = group
+	}
+	isConfig := false
+	for _, meta := range controllers {
+		if meta.isConfig {
+			isConfig = true
+			break
+		}
 	}
 	vars := map[string]any{
-		"Aliases": aliases,
-		"Group":   g,
+		"Aliases":   aliases,
+		"Group":     g,
+		"RootGroup": rootGroup,
+		"Config":    isConfig,
 	}
 	if err := setupFile.Write(filePath, vars, os.ModePerm); err != nil {
 		return errors.Wrap(err, "cannot write setup file")
 	}
 	return nil
+}
+
+func sortControllers(controllers []controllerMeta) {
+	sort.Slice(controllers, func(i, j int) bool {
+		if controllers[i].pkgPath < controllers[j].pkgPath {
+			return true
+		}
+		return false
+	})
 }
 
 func NewMainGenerator(cmdDir, template string) *MainGenerator {

@@ -101,6 +101,12 @@ type PipelineRunner struct {
 	Scope tjtypes.CRDScope
 }
 
+type controllerMeta struct {
+	pkgPath  string
+	kind     string
+	isConfig bool
+}
+
 func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 	// Note(turkenh): nolint reasoning - this is the main function of the code
 	// generation pipeline. We didn't want to split it into multiple functions
@@ -134,38 +140,13 @@ func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 		apiVersionPkgList = append(apiVersionPkgList, filepath.Join(r.ModulePathAPIs, p))
 	}
 	// Add ProviderConfig controller package to the list of controller packages.
-	controllerPkgMap := make(map[string][]string)
+	controllerRegistry := make(map[string][]controllerMeta)
 	// new API takes precedence
 	for p, g := range pc.BasePackages.ControllerMap {
-		path := filepath.Join(r.ModulePathControllers, p)
-		controllerPkgMap[g] = append(controllerPkgMap[g], path)
-		controllerPkgMap[config.PackageNameMonolith] = append(controllerPkgMap[config.PackageNameMonolith], path)
+		path := filepath.Join(r.ModulePathControllers, strings.ToLower(p))
+		controllerRegistry[g.PkgPath] = append(controllerRegistry[g.PkgPath], controllerMeta{path, g.Kind, true})
+		controllerRegistry[config.PackageNameMonolith] = append(controllerRegistry[config.PackageNameMonolith], controllerMeta{path, g.Kind, true})
 	}
-	//nolint:staticcheck
-	for _, p := range pc.BasePackages.Controller {
-		path := filepath.Join(r.ModulePathControllers, p)
-		found := false
-		for _, p := range controllerPkgMap[config.PackageNameConfig] {
-			if path == p {
-				found = true
-				break
-			}
-		}
-		if !found {
-			controllerPkgMap[config.PackageNameConfig] = append(controllerPkgMap[config.PackageNameConfig], path)
-		}
-		found = false
-		for _, p := range controllerPkgMap[config.PackageNameMonolith] {
-			if path == p {
-				found = true
-				break
-			}
-		}
-		if !found {
-			controllerPkgMap[config.PackageNameMonolith] = append(controllerPkgMap[config.PackageNameMonolith], path)
-		}
-	}
-
 	count := 0
 	for group, versions := range resourcesGroups {
 		shortGroup := strings.Split(group, ".")[0]
@@ -202,8 +183,8 @@ func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 				if err != nil {
 					panic(errors.Wrapf(err, "cannot generate controller for resource %s", name))
 				}
-				controllerPkgMap[shortGroup] = append(controllerPkgMap[shortGroup], ctrlPkgPath)
-				controllerPkgMap[config.PackageNameMonolith] = append(controllerPkgMap[config.PackageNameMonolith], ctrlPkgPath)
+				controllerRegistry[shortGroup] = append(controllerRegistry[shortGroup], controllerMeta{ctrlPkgPath, resources[name].Kind, false})
+				controllerRegistry[config.PackageNameMonolith] = append(controllerRegistry[config.PackageNameMonolith], controllerMeta{ctrlPkgPath, resources[name].Kind, false})
 				if err := exampleGen.Generate(group, version, resources[name]); err != nil {
 					panic(errors.Wrapf(err, "cannot generate example manifest for resource %s", name))
 				}
@@ -266,7 +247,7 @@ func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 	}
 
 	monolith := len(pc.MainTemplate) == 0
-	if err := NewSetupGenerator(r.DirControllers, r.DirHack, r.ModulePathAPIs).Generate(controllerPkgMap, monolith); err != nil {
+	if err := NewSetupGenerator(r.DirControllers, r.DirHack, r.ModulePathAPIs).Generate(controllerRegistry, pc.RootGroup, monolith); err != nil {
 		panic(errors.Wrap(err, "cannot generate setup file"))
 	}
 
@@ -289,8 +270,8 @@ func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 
 	fmt.Printf("\nGenerated %d resources with scope %s!\n", count, r.Scope)
 
-	groups := make([]string, 0, len(controllerPkgMap))
-	for g := range controllerPkgMap {
+	groups := make([]string, 0, len(controllerRegistry))
+	for g := range controllerRegistry {
 		groups = append(groups, g)
 	}
 	return groups

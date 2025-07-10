@@ -50,10 +50,13 @@ func (cc ResourceConfiguratorChain) Configure(r *Resource) {
 // These APIs and controllers belong to non-generated (manually maintained)
 // resources.
 type BasePackages struct {
-	APIVersion []string
-	// Deprecated: Use ControllerMap instead.
-	Controller    []string
-	ControllerMap map[string]string
+	APIVersion    []string
+	ControllerMap map[string]BasePackagesControllerMeta
+}
+
+type BasePackagesControllerMeta struct {
+	PkgPath string
+	Kind    string
 }
 
 // Provider holds configuration for a provider to be generated with Upjet.

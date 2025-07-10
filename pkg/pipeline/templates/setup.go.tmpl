@@ -3,24 +3,27 @@
 package controller
 
 import (
+    "k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/crossplane/upjet/pkg/controller"
+	"github.com/crossplane/upjet/pkg/dynamiccrd"
 
 	{{ .Imports }}
 )
 
-// Setup{{ .Group }} creates all controllers with the supplied logger and adds them to
+var {{ .Group }}CrdGroup = "{{ if .Config }}{{ .RootGroup }}{{ else }}{{ .Group }}.{{ .RootGroup }}{{ end }}"
+
+// Setup_{{ .Group }} creates all controllers with the supplied logger and adds them to
 // the supplied manager.
-func Setup{{ .Group }}(mgr ctrl.Manager, o controller.Options) error {
-	for _, setup := range []func(ctrl.Manager, controller.Options) error{
-		{{- range $alias := .Aliases }}
-		{{ $alias }}Setup,
-		{{- end }}
-	} {
-		if err := setup(mgr, o); err != nil {
-			return err
-		}
+func Setup_{{ .Group }}(mgr ctrl.Manager, o controller.Options) error {
+    crdToSetupFn := map[schema.GroupKind]func(ctrl.Manager, controller.Options) error{
+        {{- range $kind, $alias := .Aliases }}
+        schema.GroupKind{Group: {{ $.Group }}CrdGroup, Kind: "{{ $kind }}"}: {{ $alias }}Setup,
+        {{- end }}
+    }
+	if err := dynamiccrd.Setup(mgr, crdToSetupFn, {{ .Group }}CrdGroup, o); err != nil {
+		return err
 	}
 	return nil
 }
