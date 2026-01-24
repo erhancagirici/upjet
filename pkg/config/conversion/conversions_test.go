@@ -804,6 +804,56 @@ func TestOptionalFieldConversion(t *testing.T) {
 				}),
 			},
 		},
+		"ToAnnotationFieldRemoved": {
+			reason: "When source field is deleted from source object, it should be removed from the annotation",
+			args: args{
+				sourceVersion: "v1beta2",
+				targetVersion: "v1beta1",
+				fieldPath:     "spec.forProvider.foo",
+				mode:          ToAnnotation,
+				sourceObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta2",
+					"kind":       "TestResource",
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"commonField": "value",
+							// foo field got deleted
+						},
+					},
+				}),
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta1",
+					"kind":       "TestResource",
+					"metadata": map[string]any{
+						"annotations": map[string]any{
+							"internal.upjet.crossplane.io/field-conversions": `{"spec.forProvider.foo":"restored-value"}`,
+						},
+					},
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"commonField": "value",
+						},
+					},
+				}),
+			},
+			want: want{
+				converted: true,
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta1",
+					"kind":       "TestResource",
+					"metadata": map[string]any{
+						"annotations": map[string]any{
+							"internal.upjet.crossplane.io/field-conversions": `{}`, // foo field should be removed
+						},
+					},
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"commonField": "value",
+						},
+					},
+				}),
+			},
+		},
 		"VersionMismatch": {
 			reason: "No conversion when API versions don't match the conversion configuration.",
 			args: args{
