@@ -431,26 +431,22 @@ func (o *newlyIntroducedFieldConverter) ConvertPaved(src, target *fieldpath.Pave
 
 func (o *newlyIntroducedFieldConverter) convertToAnnotation(src, target *fieldpath.Paved) (bool, error) { //nolint:gocyclo // easier to follow as a unit
 	fieldValue, err := src.GetValue(o.fieldPath)
-	if fieldpath.IsNotFound(err) {
-		// Field doesn't exist in source, nothing to convert
-		return false, nil
-	}
-	if err != nil {
+	if err != nil && !fieldpath.IsNotFound(err) {
 		return false, errors.Wrapf(err, "failed to get field %q from source", o.fieldPath)
 	}
 
-	// Marshal field value to JSON bytes
-	jsonBytes, err := json.Marshal(fieldValue)
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to marshal field %q to JSON", o.fieldPath)
-	}
+	// the field might have been deleted
+	isFieldRemoval := fieldpath.IsNotFound(err)
 
 	// Optimized approach: Read ONLY our specific annotation key, not all annotations.
 	// This is more efficient and fieldpath.Paved.SetValue() will automatically preserve
 	// all other annotations when we write back.
 	annotationPath := fmt.Sprintf("metadata.annotations['%s']", AnnotationKey)
 	existingAnnotationValue, err := target.GetValue(annotationPath)
-
+	if err != nil && !fieldpath.IsNotFound(err) {
+		// Error other than NotFound
+		return false, errors.Wrapf(err, "failed to get annotation %q", AnnotationKey)
+	}
 	// Parse existing field conversion map or create new one
 	fieldMap := make(map[string]any)
 	if err == nil {
@@ -460,18 +456,18 @@ func (o *newlyIntroducedFieldConverter) convertToAnnotation(src, target *fieldpa
 				return false, errors.Wrapf(err, "failed to unmarshal annotation %q", AnnotationKey)
 			}
 		}
-	} else if !fieldpath.IsNotFound(err) {
-		// Error other than NotFound
-		return false, errors.Wrapf(err, "failed to get annotation %q", AnnotationKey)
 	}
 	// If NotFound, fieldMap remains empty which is correct - we'll create a new annotation
 
-	// Unmarshal the field value to get actual typed value (prevents double-encoding)
-	var value any
-	if err := json.Unmarshal(jsonBytes, &value); err != nil {
-		return false, errors.Wrapf(err, "failed to unmarshal value from JSON")
+	if isFieldRemoval {
+		if _, ok := fieldMap[o.fieldPath]; !ok {
+			// no-op, nothing to remove from the annotation
+			return false, nil
+		}
+		delete(fieldMap, o.fieldPath)
+	} else {
+		fieldMap[o.fieldPath] = fieldValue
 	}
-	fieldMap[o.fieldPath] = value
 
 	// Marshal the updated field map back to JSON
 	newAnnotationValue, err := json.Marshal(fieldMap)
