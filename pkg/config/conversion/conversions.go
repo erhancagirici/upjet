@@ -164,6 +164,11 @@ type PrioritizedManagedConversion interface {
 	Prioritized()
 }
 
+type DescribableConversion interface {
+	Conversion
+	Description() string
+}
+
 type baseConversion struct {
 	sourceVersion string
 	targetVersion string
@@ -189,6 +194,10 @@ type fieldCopy struct {
 	baseConversion
 	sourceField string
 	targetField string
+}
+
+func (f *fieldCopy) Description() string {
+	return fmt.Sprintf("fieldCopy | %s -> %s | %s -> %s }", f.sourceVersion, f.targetVersion, f.sourceField, f.targetField)
 }
 
 func (f *fieldCopy) ConvertPaved(src, target *fieldpath.Paved) (bool, error) {
@@ -229,6 +238,10 @@ type customConversion struct {
 	customConverter customConverter
 }
 
+func (cc *customConversion) Description() string {
+	return fmt.Sprintf("customConversion | %s -> %s ", cc.sourceVersion, cc.targetVersion)
+}
+
 func (cc *customConversion) ConvertManaged(src, target resource.Managed) (bool, error) {
 	if !cc.Applicable(src, target) || cc.customConverter == nil {
 		return false, nil
@@ -253,6 +266,10 @@ type singletonListConverter struct {
 	crdPaths       []string
 	mode           ListConversionMode
 	convertOptions *ConvertOptions
+}
+
+func (s *singletonListConverter) Description() string {
+	return fmt.Sprintf("singletonListConverter | %s -> %s | crdPaths: %v | mode: %s ", s.sourceVersion, s.targetVersion, s.crdPaths, s.mode)
 }
 
 type SingletonListConversionOption func(*singletonListConverter)
@@ -314,6 +331,10 @@ func (s *singletonListConverter) ConvertPaved(src, target *fieldpath.Paved) (boo
 type identityConversion struct {
 	baseConversion
 	excludePaths []string
+}
+
+func (i *identityConversion) Description() string {
+	return fmt.Sprintf("identityConversion | %s -> %s | excludePaths: %v}", i.sourceVersion, i.targetVersion, i.excludePaths)
 }
 
 func (i *identityConversion) ConvertManaged(src, target resource.Managed) (bool, error) {
@@ -411,6 +432,10 @@ type newlyIntroducedFieldConverter struct {
 	baseConversion
 	fieldPath string
 	mode      NewlyIntroducedFieldConversionMode
+}
+
+func (o *newlyIntroducedFieldConverter) Description() string {
+	return fmt.Sprintf("newlyIntroducedFieldConverter | %s -> %s | fieldPath: %s, mode: %s}", o.sourceVersion, o.targetVersion, o.fieldPath, o.mode)
 }
 
 func (o *newlyIntroducedFieldConverter) ConvertPaved(src, target *fieldpath.Paved) (bool, error) {
@@ -541,6 +566,10 @@ type fieldTypeConverter struct {
 	baseConversion
 	fieldPath string
 	mode      TypeConversionMode
+}
+
+func (f *fieldTypeConverter) Description() string {
+	return fmt.Sprintf("fieldTypeConverter | %s -> %s | %s mode: %s}", f.sourceVersion, f.targetVersion, f.fieldPath, f.mode)
 }
 
 func (f *fieldTypeConverter) ConvertPaved(src, target *fieldpath.Paved) (bool, error) {
