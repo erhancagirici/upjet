@@ -5,13 +5,21 @@
 package pipeline
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/tools/imports"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/crossplane/upjet/v2/pkg/config"
 	"github.com/crossplane/upjet/v2/pkg/examples"
@@ -29,6 +37,7 @@ type terraformedInput struct {
 // configuration for namespaced resources is optional, if it isn't provided then
 // this function will only generate cluster scoped resources.
 func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
+	logger := logging.NewLogrLogger(zap.New().WithName("upjet-pipeline"))
 	var groups []string
 	if pcNamespace == nil {
 		// namespaced resource generation is not enabled, generate only cluster scoped resources
@@ -41,7 +50,8 @@ func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
 			ModulePathAPIs:        filepath.Join(pcCluster.ModulePath, "apis"),
 			ModulePathControllers: filepath.Join(pcCluster.ModulePath, "internal", "controller"),
 
-			Scope: tjtypes.CRDScopeCluster,
+			Scope:  tjtypes.CRDScopeCluster,
+			logger: logger,
 		}
 
 		groups = cluster.Run(pcCluster)
@@ -63,7 +73,8 @@ func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
 		ModulePathAPIs:        filepath.Join(pcCluster.ModulePath, "apis", "cluster"),
 		ModulePathControllers: filepath.Join(pcCluster.ModulePath, "internal", "controller", "cluster"),
 
-		Scope: tjtypes.CRDScopeCluster,
+		Scope:  tjtypes.CRDScopeCluster,
+		logger: logger: logger.WithValues("scope", "cluster"),,
 	}
 
 	namespaced := &PipelineRunner{
@@ -75,7 +86,8 @@ func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
 		ModulePathAPIs:        filepath.Join(pcNamespace.ModulePath, "apis", "namespaced"),
 		ModulePathControllers: filepath.Join(pcNamespace.ModulePath, "internal", "controller", "namespaced"),
 
-		Scope: tjtypes.CRDScopeNamespaced,
+		Scope:  tjtypes.CRDScopeNamespaced,
+		logger: logger.WithValues("scope", "namespaced"),
 	}
 
 	// Map of service name (e.g. ec2) to resource controller packages. Should be
@@ -83,6 +95,7 @@ func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
 	groups = cluster.Run(pcCluster)
 	_ = namespaced.Run(pcNamespace)
 	if len(pcCluster.MainTemplate) > 0 {
+		logger.Info("generating main.go from template")
 		if err := NewMainGenerator(filepath.Join(rootDir, "cmd", "provider"), pcCluster.MainTemplate).Generate(groups); err != nil {
 			panic(errors.Wrap(err, "cannot generate main.go"))
 		}
@@ -99,12 +112,16 @@ type PipelineRunner struct {
 	ModulePathControllers string
 
 	Scope tjtypes.CRDScope
+
+	logger logging.Logger
 }
 
 func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 	// Note(turkenh): nolint reasoning - this is the main function of the code
 	// generation pipeline. We didn't want to split it into multiple functions
 	// for better readability considering the straightforward logic here.
+
+	r.logger.Info("starting Upjet pipeline")
 
 	// Group resources based on their Group and API Versions.
 	// An example entry in the tree would be:
@@ -266,37 +283,31 @@ func (r *PipelineRunner) Run(pc *config.Provider) []string { //nolint:gocyclo
 		}
 	}
 
+	r.logger.Info("Storing examples...")
 	if err := exampleGen.StoreExamples(); err != nil {
 		panic(errors.Wrapf(err, "cannot store examples"))
 	}
-
+	r.logger.Info("Generating api registrations...")
 	if err := NewRegisterGenerator(r.DirAPIs, r.DirHack, r.ModulePathAPIs).Generate(apiVersionPkgList); err != nil {
 		panic(errors.Wrap(err, "cannot generate register file"))
 	}
 
 	monolith := len(pc.MainTemplate) == 0
+	r.logger.Info("Generating controller setup files...")
 	if err := NewSetupGenerator(r.DirControllers, r.DirHack, r.ModulePathAPIs).Generate(controllerPkgMap, monolith); err != nil {
 		panic(errors.Wrap(err, "cannot generate setup file"))
 	}
 
-	// NOTE(muvaf): gosec linter requires that the whole command is hard-coded.
-	// So, we set the directory of the command instead of passing in the directory
-	// as an argument to "find".
-	fmt.Printf("Running goimports on apis folder with scope %s\n", r.Scope)
-	apisCmd := exec.Command("bash", "-c", "goimports -w $(find . -iname 'zz_*')") //nolint:noctx
-	apisCmd.Dir = filepath.Clean(r.DirAPIs)
-	if out, err := apisCmd.CombinedOutput(); err != nil {
-		panic(errors.Wrap(err, "cannot run goimports for apis folder: "+string(out)))
+	r.logger.Info("Running goimports on apis folder")
+	if err := formatGeneratedFiles(filepath.Clean(r.DirAPIs)); err != nil {
+		panic(errors.Wrap(err, "cannot run goimports for apis folder"))
 	}
 
-	fmt.Printf("Running goimports on controller folder with scope %s\n", r.Scope)
-	ctrlCmd := exec.Command("bash", "-c", "goimports -w $(find . -iname 'zz_*')") //nolint:noctx
-	ctrlCmd.Dir = filepath.Clean(r.DirControllers)
-	if out, err := ctrlCmd.CombinedOutput(); err != nil {
-		panic(errors.Wrap(err, "cannot run goimports for controller folder: "+string(out)))
+	r.logger.Info("Running goimports on controller folder")
+	if err := formatGeneratedFiles(filepath.Clean(r.DirControllers)); err != nil {
+		panic(errors.Wrap(err, "cannot run goimports for controllers folder"))
 	}
-
-	fmt.Printf("\nGenerated %d resources with scope %s!\n", count, r.Scope)
+	r.logger.Info(fmt.Sprintf("Generated %d resources with scope %s!", count, r.Scope))
 
 	groups := make([]string, 0, len(controllerPkgMap))
 	for g := range controllerPkgMap {
@@ -316,4 +327,49 @@ func sortedResources(m map[string]*config.Resource) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func formatGeneratedFiles(root string) error {
+	g, _ := errgroup.WithContext(context.Background())
+	workers := runtime.GOMAXPROCS(0) * 2
+	g.SetLimit(workers)
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Filter: Only files (not dirs) starting with "zz_" and ending in ".go"
+		if !d.IsDir() && strings.HasPrefix(d.Name(), "zz_") && strings.HasSuffix(d.Name(), ".go") {
+			// Launch formatting in the worker pool
+			g.Go(func() error {
+				return processFile(path)
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return g.Wait()
+}
+
+func processFile(path string) error {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	// Setting the path is vital for 'goimports' to find the correct go.mod context
+	formatted, err := imports.Process(path, original, nil)
+	if err != nil {
+		return fmt.Errorf("error formatting %s: %w", path, err)
+	}
+
+	if !bytes.Equal(original, formatted) {
+		return os.WriteFile(path, formatted, 0644)
+	}
+	return nil
 }
