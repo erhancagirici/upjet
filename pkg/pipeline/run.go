@@ -74,7 +74,7 @@ func Run(pcCluster, pcNamespace *config.Provider, rootDir string) {
 		ModulePathControllers: filepath.Join(pcCluster.ModulePath, "internal", "controller", "cluster"),
 
 		Scope:  tjtypes.CRDScopeCluster,
-		logger: logger: logger.WithValues("scope", "cluster"),,
+		logger: logger.WithValues("scope", "cluster"),
 	}
 
 	namespaced := &PipelineRunner{

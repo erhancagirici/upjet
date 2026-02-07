@@ -124,13 +124,19 @@ func Convert(params map[string]any, p []string, mode ListConversionMode, opts *C
 						}
 					}
 				}
+				if v == nil {
+					if err := setValue(pv, []any{}, e); err != nil {
+						return nil, errors.Wrapf(err, "cannot set the singleton list's value at the field path %s", e)
+					}
+					continue
+				}
 				if err := setValue(pv, []any{v}, e); err != nil {
 					return nil, errors.Wrapf(err, "cannot set the singleton list's value at the field path %s", e)
 				}
 			case ToEmbeddedObject:
 				var newVal any = nil
 				if v != nil {
-					newVal = map[string]any{}
+					//newVal = map[string]any{}
 					s, ok := v.([]any)
 					if !ok {
 						// then it's not a slice

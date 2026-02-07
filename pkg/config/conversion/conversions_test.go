@@ -996,6 +996,106 @@ func TestOptionalFieldConversion(t *testing.T) {
 				}),
 			},
 		},
+		"SuccessfulToAnnotationNestedSliceField": {
+			reason: "Successfully convert a nested field to annotation.",
+			args: args{
+				sourceVersion: "v1beta2",
+				targetVersion: "v1beta1",
+				fieldPath:     "spec.forProvider.a.b[*].c",
+				mode:          ToAnnotation,
+				sourceObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta2",
+					"kind":       "TestResource",
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"a": map[string]any{
+								"b": []any{
+									map[string]any{
+										"fizz": "fizz-val-0",
+										"c":    "c-val-0",
+									},
+									map[string]any{
+										"fizz": "fizz-val-1",
+										// no c here
+									},
+									map[string]any{
+										"fizz": "fizz-val-2",
+										"c":    "c-val-2",
+									},
+								},
+							},
+							"existingField": "existing",
+						},
+					},
+				}),
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta1",
+					"kind":       "TestResource",
+				}),
+			},
+			want: want{
+				converted: true,
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta1",
+					"kind":       "TestResource",
+					"metadata": map[string]any{
+						"annotations": map[string]any{
+							"internal.upjet.crossplane.io/field-conversions": `{"spec.forProvider.a.b[0].c":"c-val-0","spec.forProvider.a.b[2].c":"c-val-2"}`,
+						},
+					},
+				}),
+			},
+		},
+		"SuccessfulFromAnnotationNestedSliceField": {
+			reason: "Successfully convert annotation back to nested field.",
+			args: args{
+				sourceVersion: "v1beta1",
+				targetVersion: "v1beta2",
+				fieldPath:     "spec.forProvider.a.b[*].c",
+				mode:          FromAnnotation,
+				sourceObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta1",
+					"kind":       "TestResource",
+					"metadata": map[string]any{
+						"annotations": map[string]any{
+							"internal.upjet.crossplane.io/field-conversions": `{"spec.forProvider.a.b[0].c":"c-val-0","spec.forProvider.a.b[2].c":"c-val-2"}`,
+						},
+					},
+				}),
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta2",
+					"kind":       "TestResource",
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"existingField": "existing",
+						},
+					},
+				}),
+			},
+			want: want{
+				converted: true,
+				targetObj: fieldpath.Pave(map[string]any{
+					"apiVersion": "test.crossplane.io/v1beta2",
+					"kind":       "TestResource",
+					"spec": map[string]any{
+						"forProvider": map[string]any{
+							"existingField": "existing",
+							"a": map[string]any{
+								"b": []any{
+									map[string]any{
+										"c": "c-val-0",
+									},
+									nil,
+									map[string]any{
+										"c": "c-val-2",
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

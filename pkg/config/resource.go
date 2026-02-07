@@ -736,6 +736,11 @@ type AutoConversionRegistrationOptions struct {
 	//       conversion.NewFieldTypeConversion("v1beta2", "v1beta1", "spec.forProvider.price", conversion.FloatToString),
 	//   )
 	AutoRegisterExcludePaths []string
+
+	//
+	SingletonListConversionExcludePaths []string
+
+	PreSingletonListConversions []conversion.Conversion
 }
 
 // UpdateLoopPrevention is an interface that defines the behavior to prevent

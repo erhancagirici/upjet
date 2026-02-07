@@ -120,18 +120,18 @@ func RegisterAutoConversions(pc *Provider, crdSchemaChanges []byte) error { //no
 								// This indicates a mismatch between CRD schema and Terraform schema
 								return fmt.Errorf("unsupported type for number conversion in field %q: got Terraform schema type %q", change.Path, sch.Type)
 							}
-						case change.TypeChangeDetails.Deleted.Is("number") && change.TypeChangeDetails.Deleted.Is("string"):
+						case change.TypeChangeDetails.Deleted.Is("number") && change.TypeChangeDetails.Added.Is("string"):
 							// Number -> String conversion
 							// Cannot determine if the old number was int or float without accessing old schema.
 							// Default to integer conversion. Operators must exclude and manually register
 							// if the field was actually a float to avoid precision loss.
 							r.Conversions = append(r.Conversions, conversion.NewFieldTypeConversion(cv.OldVersion, cv.NewVersion, change.Path, conversion.IntToString),
 								conversion.NewFieldTypeConversion(cv.NewVersion, cv.OldVersion, change.Path, conversion.StringToInt))
-						case change.TypeChangeDetails.Deleted.Is("string") && change.TypeChangeDetails.Deleted.Is("boolean"):
+						case change.TypeChangeDetails.Deleted.Is("string") && change.TypeChangeDetails.Added.Is("boolean"):
 							// String → Boolean: "true"/"false" → true/false
 							r.Conversions = append(r.Conversions, conversion.NewFieldTypeConversion(cv.OldVersion, cv.NewVersion, change.Path, conversion.StringToBool),
 								conversion.NewFieldTypeConversion(cv.NewVersion, cv.OldVersion, change.Path, conversion.BoolToString))
-						case change.TypeChangeDetails.Deleted.Is("boolean") && change.TypeChangeDetails.Deleted.Is("string"):
+						case change.TypeChangeDetails.Deleted.Is("boolean") && change.TypeChangeDetails.Added.Is("string"):
 							// Boolean → String: true/false → "true"/"false"
 							r.Conversions = append(r.Conversions, conversion.NewFieldTypeConversion(cv.OldVersion, cv.NewVersion, change.Path, conversion.BoolToString),
 								conversion.NewFieldTypeConversion(cv.NewVersion, cv.OldVersion, change.Path, conversion.StringToBool))
@@ -184,6 +184,9 @@ func ExcludeTypeChangesFromIdentity(pc *Provider, crdSchemaChanges []byte) error
 					// Field additions/deletions are handled fine by identity conversion
 					if change.ChangeType == crdschema.ChangeTypeTypeChanged {
 						setIdentityConversionExcludePath(r, change.Path, m)
+					}
+					if change.ChangeType == crdschema.ChangeTypeFieldAdded || change.ChangeType == crdschema.ChangeTypeFieldDeleted {
+						r.AutoConversionRegistrationOptions.SingletonListConversionExcludePaths = append(r.AutoConversionRegistrationOptions.SingletonListConversionExcludePaths, change.Path)
 					}
 				}
 			}
