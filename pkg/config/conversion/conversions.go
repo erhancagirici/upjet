@@ -429,10 +429,24 @@ func (o *newlyIntroducedFieldConverter) ConvertPaved(src, target *fieldpath.Pave
 	}
 }
 
-func (o *newlyIntroducedFieldConverter) convertToAnnotation(src, target *fieldpath.Paved) (bool, error) { //nolint:gocyclo // easier to follow as a unit
-	fieldValue, err := src.GetValue(o.fieldPath)
+func (o *newlyIntroducedFieldConverter) convertToAnnotation(src, target *fieldpath.Paved) (bool, error) {
+	expandedPaths, err := src.ExpandWildcards(o.fieldPath)
 	if err != nil && !fieldpath.IsNotFound(err) {
-		return false, errors.Wrapf(err, "failed to get field %q from source", o.fieldPath)
+		return false, errors.Wrapf(err, "cannot expand wildcards in the fieldpath expression %s", o.fieldPath)
+	}
+	for _, ep := range expandedPaths {
+		_, err := o.convertExpandedPathToAnnotation(src, target, ep)
+		if err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (o *newlyIntroducedFieldConverter) convertExpandedPathToAnnotation(src, target *fieldpath.Paved, fieldPath string) (bool, error) { //nolint:gocyclo // easier to follow as a unit
+	fieldValue, err := src.GetValue(fieldPath)
+	if err != nil && !fieldpath.IsNotFound(err) {
+		return false, errors.Wrapf(err, "failed to get field %q from source", fieldPath)
 	}
 
 	// the field might have been deleted
@@ -460,13 +474,13 @@ func (o *newlyIntroducedFieldConverter) convertToAnnotation(src, target *fieldpa
 	// If NotFound, fieldMap remains empty which is correct - we'll create a new annotation
 
 	if isFieldRemoval {
-		if _, ok := fieldMap[o.fieldPath]; !ok {
+		if _, ok := fieldMap[fieldPath]; !ok {
 			// no-op, nothing to remove from the annotation
 			return false, nil
 		}
-		delete(fieldMap, o.fieldPath)
+		delete(fieldMap, fieldPath)
 	} else {
-		fieldMap[o.fieldPath] = fieldValue
+		fieldMap[fieldPath] = fieldValue
 	}
 
 	// Marshal the updated field map back to JSON
@@ -506,20 +520,72 @@ func (o *newlyIntroducedFieldConverter) convertFromAnnotation(src, target *field
 		return false, errors.Wrapf(err, "failed to unmarshal annotation %q from JSON", AnnotationKey)
 	}
 
-	// Extract the specific field value from the map
-	fieldValueRaw, exists := m[o.fieldPath]
-	if !exists {
-		// This specific field is not in the annotation map
-		return false, nil
-	}
-
-	// fieldValueRaw is already the actual value, use it directly
-	if fieldValueRaw != nil {
-		if err := target.SetValue(o.fieldPath, fieldValueRaw); err != nil {
+	// The converter gets registered with a non-expanded path and can contain wildcards.
+	// keys of the annotation map are expanded paths (no wildcards)
+	//
+	// Say a conversion is registered for:
+	//   foo.bar[*].baz
+	// The annotation map can have:
+	//   "foo.bar[0].baz" : "val0"
+	//   "foo.bar[1].baz" : "val1"
+	//   "foo.bar[2].baz" : "val2"
+	// Therefore, we find all expanded paths in annotation map
+	// that corresponds to the registered wildcard path
+	for expFieldPath := range m {
+		isExpansion, err := isExpansionOf(expFieldPath, o.fieldPath)
+		if err != nil {
+			return false, errors.Wrapf(err, "failed to check for expansion %q", o.fieldPath)
+		}
+		if !isExpansion {
+			continue
+		}
+		fieldValueRaw, exists := m[expFieldPath]
+		if !exists || fieldValueRaw == nil {
+			// This specific field is not in the annotation map
+			continue
+		}
+		if err := target.SetValue(expFieldPath, fieldValueRaw); err != nil {
 			return false, errors.Wrapf(err, "failed to set field %q in target", o.fieldPath)
 		}
 	}
 
+	return true, nil
+}
+
+// isExpansionOf returns true if the given expanded fieldpath
+// is an expansion of the given wildcard path
+// example:
+//
+//	"foo.bar[2].baz" IS an expansion of foo.bar[*].baz
+//	foo.bar[2].baz IS NOT an expansion of fizz[*].buzz.bar
+func isExpansionOf(expandedPath, withWildcardPath string) (bool, error) {
+	expanded, err := fieldpath.Parse(expandedPath)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to parse the expanded path %q", expandedPath)
+	}
+	withWildcard, err := fieldpath.Parse(withWildcardPath)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to parse the wildcard path %q", withWildcardPath)
+	}
+
+	if len(withWildcard) != len(expanded) {
+		return false, nil
+	}
+	for i, w := range withWildcard {
+		exp := expanded[i]
+		if w.Field == "*" {
+			continue
+		}
+		if w.Type != exp.Type {
+			return false, nil
+		}
+		if w.Field != exp.Field {
+			return false, nil
+		}
+		if w.Index != exp.Index {
+			return false, nil
+		}
+	}
 	return true, nil
 }
 
