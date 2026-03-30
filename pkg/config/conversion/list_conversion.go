@@ -124,13 +124,21 @@ func Convert(params map[string]any, p []string, mode ListConversionMode, opts *C
 						}
 					}
 				}
+				// blocks are always non-nil in TF config representation
+				// a nil embedded object should convert into an empty slice
+				// otherwise, we end up with a length 1 slice with a nil element.
+				if v == nil {
+					if err := setValue(pv, []any{}, e); err != nil {
+						return nil, errors.Wrapf(err, "cannot set the singleton list's value at the field path %s", e)
+					}
+					continue
+				}
 				if err := setValue(pv, []any{v}, e); err != nil {
 					return nil, errors.Wrapf(err, "cannot set the singleton list's value at the field path %s", e)
 				}
 			case ToEmbeddedObject:
 				var newVal any = nil
 				if v != nil {
-					newVal = map[string]any{}
 					s, ok := v.([]any)
 					if !ok {
 						// then it's not a slice
@@ -142,12 +150,18 @@ func Convert(params map[string]any, p []string, mode ListConversionMode, opts *C
 					if len(s) > 0 {
 						newVal = s[0]
 					}
+					// NOTE: in case of 0-lenght, do not initialize newVal
+					// as empty map and keep it nil. Otherwise, when the target field's
+					// runtime type is a pointer type, this causes embedded object to
+					// be zero-value struct instead of nil.
 				}
 				if opts != nil {
 					// We replace 0th index with "*" to be able to stay consistent
 					// with the paths parameter in the keys of opts.ListInjectKeys.
 					if inj, ok := opts.ListInjectKeys[strings.ReplaceAll(e, "0", "*")]; ok && inj.Key != "" && inj.Value != "" {
-						delete(newVal.(map[string]any), inj.Key)
+						if m, ok := newVal.(map[string]any); ok {
+							delete(m, inj.Key)
+						}
 					}
 				}
 				if err := setValue(pv, newVal, e); err != nil {
